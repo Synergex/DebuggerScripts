@@ -1,4 +1,4 @@
-﻿"use strict";
+"use strict";
 
 function hostModule()
 {
@@ -16,7 +16,16 @@ function hostModule()
 function findSymbol(name)
 {
     var moduleName = hostModule();
-    return host.getModuleSymbol(moduleName, name);  
+    var moduleSymbol = host.getModuleSymbol(moduleName, name);  
+    if(moduleSymbol == null || moduleSymbol.isNull)
+    {
+        host.diagnostics.debugLog("failed to locate symbol: " + name + " ensure symbols are correctly loaded for " + moduleName);
+        return moduleSymbol;
+    }
+    else
+    {
+        return moduleSymbol;
+    }
 }
 
 function GetFileNameFromHandle(handle)
@@ -183,7 +192,15 @@ function sourceNumberToName(mptr, sourceNumber)
         var nextAddress = mptr.linctl.address.add(nextSourceVal.next);
         nextSource = host.createPointerObject(nextAddress, currentHostName, "V9SRC *");
     }
-    return host.memory.readString(nextSource.dereference().name);
+
+    if(nextSource.isNull || nextSource.dereference().srcnum != sourceNumber)
+    {
+        host.diagnostics.debugLog("failed to locate source number " + sourceNumber.toString());
+    }
+    else
+    {
+        return host.memory.readString(nextSource.dereference().name);
+    }
 }
 
 function pcToSource(mptr, dblpc)
@@ -204,18 +221,17 @@ function pcToSource(mptr, dblpc)
         }
     }
 
-    //var pcp = host.createPointerObject(mptr.linctl.address.add(targetPSeg.ctlndxl), currentHostName, "V9PSEG *");
-    //var pcpIndex = 0;
-	//var ix = (psegTableTyped[segIndex].ctlndx - targetPSeg.ctlndx);
-    //var lincnt = 0;
-	//while ((--ix >= 0) && (pcp[pcpIndex] < pcOffset))
-    //{
-    //    pcpIndex++;
-    //    lincnt++;
-    //}
+    var pcp = host.createPointerObject(mptr.linctl.address.add(targetPSeg.ctlndx), currentHostName, "V9PSEG *");
+    var pcpIndex = 0;
+	var ix = (psegTableTyped[segIndex].ctlndx - targetPSeg.ctlndx);
+    var lincnt = 0;
+	while ((--ix >= 0) && (pcp[pcpIndex] < pcOffset))
+    {
+        pcpIndex++;
+        lincnt++;
+    }
 
-
-    return { SourceFile: sourceNumberToName(mptr, targetPSeg.srcnum), LineNumber: currentLineNumber };
+    return { SourceFile: sourceNumberToName(mptr, targetPSeg.srcnum + 1), LineNumber: currentLineNumber };
 }
 
 class IOCB_FileTypeFlags
