@@ -116,10 +116,17 @@ function showTraceback()
         var mptr = frame.mptr;
         if(mptr != null)
         {
+            var allScopeItems = [];
+            for(var i = 0; i <= frame.scplvl; i++ )
+            {
+                var items = iterateLLST(frame.lclscope[i].hdr, "HND_RNT *");
+                allScopeItems = allScopeItems.concat(items);
+            }
+
             var sourceInfo = pcToSource(mptr, first ? mptr.exitpc : findSymbol("g_dblpc"));
             var owner = mptr.dereference().owner;
             var name = readString(owner.dereference().se_name);
-            result.push(`${name}(${getArguments(frame).join(",")}) -> ${sourceInfo.SourceFile} : ${sourceInfo.LineNumber}`);
+            result.push(`${name}(${getArguments(frame).join(",")}) -> ${sourceInfo.SourceFile} : ${sourceInfo.LineNumber} ### Object Scope Count: ${frame.scplvl} Object Count: ${allScopeItems.length.toString()}`);
         }
         first = false;
     }
@@ -232,6 +239,49 @@ function pcToSource(mptr, dblpc)
     }
 
     return { SourceFile: sourceNumberToName(mptr, targetPSeg.srcnum + 1), LineNumber: currentLineNumber };
+}
+
+function iterateLLST(head, targetType)
+{
+    var result = [];
+    var current = head;
+    var currentModuleName = hostModule();
+
+    if(head.prev.address != head.next.address)
+    {
+    do
+    {
+        result.push(host.createTypedObject(current.address, currentModuleName, targetType));
+        current = current.next.dereference();
+    }while(current.address != head.address);
+    }
+    return result;
+}
+
+function showMemory()
+{
+    var maxMemoryUsed = findSymbol("g_maxmemused");
+    var inUseMemory = findSymbol("g_inuse");
+
+    var items = iterateLLST(findSymbol("s_prgscope"), "HND_RNT *");
+
+    for(var item of items)
+    {
+        host.diagnostics.debugLog(readString(item.dereference().cctl.dereference().clsnam));
+    }
+    var dbrMemItems = iterateLLST(findSymbol("g_dbrmem"), "MEM_LLST *");
+    var exeMemItems = iterateLLST(findSymbol("g_exemem"), "MEM_LLST *");
+    var stmtMemItems = iterateLLST(findSymbol("g_stmtmem"), "MEM_LLST *");
+    var freeTempItems = iterateLLST(findSymbol("g_tmpfree"), "MEM_LLST *");
+    //host.diagnostics.debugLog(items);
+
+    return {
+        MaxMemoryUsed: maxMemoryUsed.toString() + "B",
+        InUseMemory: inUseMemory.toString() + "B",
+        DBRMemAllocationCount: dbrMemItems.length.toString(),
+        EXEMemAllocationCount: exeMemItems.length.toString(),
+        StatementMemAllocationCount: stmtMemItems.length.toString(),
+        TempFreeListCount: freeTempItems.length.toString() };
 }
 
 class IOCB_FileTypeFlags
@@ -443,6 +493,10 @@ function initializeScript() {
         new host.functionAlias(
             showTraceback,
             'showTraceback'
+        ),
+        new host.functionAlias(
+            showMemory,
+            'showMemory'
         )
     ];
 }
