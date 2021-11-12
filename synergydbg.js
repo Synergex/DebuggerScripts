@@ -17,7 +17,7 @@ function findSymbol(name)
 {
     var moduleName = hostModule();
     var moduleSymbol = host.getModuleSymbol(moduleName, name);  
-    if(moduleSymbol == null || moduleSymbol.isNull)
+    if(moduleSymbol == null || moduleSymbol == undefined)
     {
         host.diagnostics.debugLog("failed to locate symbol: " + name + " ensure symbols are correctly loaded for " + moduleName);
         return moduleSymbol;
@@ -247,13 +247,13 @@ function iterateLLST(head, targetType)
     var current = head;
     var currentModuleName = hostModule();
 
-    if(head.prev.address != head.next.address)
+    if(!head.isNull && head.prev.address != head.next.address)
     {
-    do
-    {
-        result.push(host.createTypedObject(current.address, currentModuleName, targetType));
-        current = current.next.dereference();
-    }while(current.address != head.address);
+        do
+        {
+            result.push(host.createTypedObject(current.address, currentModuleName, targetType));
+            current = current.next.dereference();
+        }while(current.address != head.address);
     }
     return result;
 }
@@ -273,15 +273,23 @@ function showMemory()
     var exeMemItems = iterateLLST(findSymbol("g_exemem"), "MEM_LLST *");
     var stmtMemItems = iterateLLST(findSymbol("g_stmtmem"), "MEM_LLST *");
     var freeTempItems = iterateLLST(findSymbol("g_tmpfree"), "MEM_LLST *");
+    var allocatedTempItems = iterateLLST(findSymbol("g_tmpblks"), "SMLTMP *");
+
+    var gMaxMem = findSymbol("g_maxmem");
+    var relSegs = findSymbol("g_relsegs");
+     
     //host.diagnostics.debugLog(items);
 
     return {
-        MaxMemoryUsed: maxMemoryUsed.toString() + "B",
-        InUseMemory: inUseMemory.toString() + "B",
+        MaxMemoryUsedBytes: maxMemoryUsed.toString(),
+        InUseMemoryBytes: inUseMemory.toString(),
+        MaxMemSetting: gMaxMem.toString(),
+        RelSegs: relSegs.toString(),
         DBRMemAllocationCount: dbrMemItems.length.toString(),
         EXEMemAllocationCount: exeMemItems.length.toString(),
         StatementMemAllocationCount: stmtMemItems.length.toString(),
-        TempFreeListCount: freeTempItems.length.toString() };
+        TempFreeListCount: freeTempItems.length.toString(),
+        SmallTempListCount: allocatedTempItems.length.toString() };
 }
 
 class IOCB_FileTypeFlags
