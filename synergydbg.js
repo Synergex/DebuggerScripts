@@ -62,6 +62,17 @@ function getArguments(frame)
     var DSC_ID = 0x0080;	/*   Implied Decimal			*/
     var DSC_DIM = 0x0400; /*   Dimensioned			*/
     var DSC_OHND = 0x4000;	/*   Object handle			*/
+    if(frame.xargp.targetSize == 8)
+    {
+        DSC_A =	0x00100;	/*   Alpha				*/
+        DSC_I = 0x00200;	/*   Integer				*/
+        DSC_D = 0x00400;	/*   Decimal				*/
+        DSC_ID = 0x00800;	/*   Implied Decimal			*/
+        DSC_DIM = 0x10000; /*   Dimensioned			*/
+        DSC_OHND = 0x100000;	/*   Object handle			*/
+    }
+
+
     if(frame.xargp.isNull)
         return [];
 
@@ -275,9 +286,14 @@ function showMemory()
     var freeTempItems = iterateLLST(findSymbol("g_tmpfree"), "MEM_LLST *");
     var allocatedTempItems = iterateLLST(findSymbol("g_tmpblks"), "SMLTMP *");
 
+    var allocatedErrtrcItems = iterateLLST(findSymbol("g_errtrclst"), "eltrace *");
+    var allocatedLogItems = iterateLLST(findSymbol("g_logmem"), "MEM_LLST *");
+
+
     var gMaxMem = findSymbol("g_maxmem");
     var relSegs = findSymbol("g_relsegs");
-     
+    var wrkMem0 = findSymbol("g_wrk0");
+    var wrkMem1 = findSymbol("g_wrk1");
     //host.diagnostics.debugLog(items);
 
     return {
@@ -289,7 +305,10 @@ function showMemory()
         EXEMemAllocationCount: exeMemItems.length.toString(),
         StatementMemAllocationCount: stmtMemItems.length.toString(),
         TempFreeListCount: freeTempItems.length.toString(),
-        SmallTempListCount: allocatedTempItems.length.toString() };
+        SmallTempListCount: allocatedTempItems.length.toString(),
+        WrkMemSize: (wrkMem0.memsiz + wrkMem1.memsiz).toString(),
+        LogicalListSize: allocatedLogItems.length.toString(),
+        ErrorControlListSize: allocatedErrtrcItems.length.toString() };
 }
 
 class IOCB_FileTypeFlags
