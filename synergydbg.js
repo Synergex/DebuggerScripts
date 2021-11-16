@@ -290,7 +290,7 @@ function iterateLLST(head, targetType)
     var current = head;
     var currentModuleName = hostModule();
 
-    if(!head.isNull && head.prev.address != head.next.address)
+    if(head != undefined && !head.isNull && head.prev.address != head.next.address)
     {
         do
         {
