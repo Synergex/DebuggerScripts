@@ -13,11 +13,11 @@ function hostModule()
     }
 }
 
-function findSymbol(name)
+function findSymbol(name, allowUndefined)
 {
     var moduleName = hostModule();
     var moduleSymbol = host.getModuleSymbol(moduleName, name);  
-    if(moduleSymbol == null || moduleSymbol == undefined)
+    if(!allowUndefined && (moduleSymbol == null || moduleSymbol == undefined))
     {
         host.diagnostics.debugLog("failed to locate symbol: " + name + " ensure symbols are correctly loaded for " + moduleName);
         return moduleSymbol;
@@ -180,13 +180,45 @@ function getHandles(dynctl, isGlobal)
         if(handleType.isMemory)
         {
             var maxDisplaySize = Math.min(dynhand.size, 120);
-            result.push(`Scope = ${isGlobal ? "Global" : "Local"} Type = ${typeString} Size = ${dynhand.size} Address = ${dynhand.addr.address} Value = ${readString(dynhand.addr, maxDisplaySize)}`);
+            result.push(
+                {
+                    Scope: isGlobal ? "Global" : "Local",
+                    Type: typeString,
+                    Size: dynhand.size,
+                    Address: dynhand.addr.address,
+                    Value: readString(dynhand.addr, maxDisplaySize)
+                });
         }
         else
         {
-            result.push(`Scope = ${isGlobal ? "Global" : "Local"} Type = ${typeString} Size = ${dynhand.size} Address = ${dynhand.addr.address}`);
+           result.push(
+                {
+                    Scope: isGlobal ? "Global" : "Local",
+                    Type: typeString,
+                    Size: dynhand.size,
+                    Address: dynhand.addr.address
+                });
         }
         
+    }
+
+    return result;
+}
+
+function stringifyHandles(handles)
+{
+    var result = [];
+
+    for(var handle of handles)
+    {
+        if(handle.Value == undefined)
+        {
+            result.push(`Scope = ${handle.Scope} Type = ${handle.Type} Size = ${handle.Size} Address = ${handle.Address}`);
+        }
+        else
+        {
+            result.push(`Scope = ${handle.Scope} Type = ${handle.Type} Size = ${handle.Size} Address = ${handle.Address} Value = ${handle.Value}`);
+        }
     }
 
     return result;
@@ -196,7 +228,7 @@ function showHandles()
 {
     var globalDynmem = findSymbol("g_dm_gctl");
     var localDynmem = findSymbol("g_dm_lctl");
-    return getHandles(globalDynmem, true).concat(getHandles(localDynmem, false))
+    return stringifyHandles(getHandles(globalDynmem, true).concat(getHandles(localDynmem, false)));
 }
 
 function sourceNumberToName(mptr, sourceNumber)
@@ -289,12 +321,27 @@ function showMemory()
     var allocatedErrtrcItems = iterateLLST(findSymbol("g_errtrclst"), "eltrace *");
     var allocatedLogItems = iterateLLST(findSymbol("g_logmem"), "MEM_LLST *");
 
-
+    var netFxLoaded = findSymbol("pRuntimeHost", true);
+    var netLoaded = findSymbol("pCoreHost", true);
+    
     var gMaxMem = findSymbol("g_maxmem");
     var relSegs = findSymbol("g_relsegs");
     var wrkMem0 = findSymbol("g_wrk0");
     var wrkMem1 = findSymbol("g_wrk1");
-    //host.diagnostics.debugLog(items);
+    var errMem = findSymbol("s_ewrk");
+    var loadedDllCount = findSymbol("g_nmdlls");
+    var sdCtrl = findSymbol("g_r_sdctrl");
+    var sdWrkMem0 = sdCtrl.dereference().c_wrk0.memsiz;
+    var sdWrkMem1 = sdCtrl.dereference().c_wrk1.memsiz;
+    var sdWrkMem2 = sdCtrl.dereference().c_wrk2.memsiz;
+
+    var globalDynmem = findSymbol("g_dm_gctl");
+    var globalHandles = getHandles(globalDynmem, true);
+    var globalHandleAllocatedBytes = 0;
+    for(var handle of globalHandles)
+    {
+        globalHandleAllocatedBytes += handle.Size;
+    }
 
     return {
         MaxMemoryUsedBytes: maxMemoryUsed.toString(),
@@ -306,9 +353,15 @@ function showMemory()
         StatementMemAllocationCount: stmtMemItems.length.toString(),
         TempFreeListCount: freeTempItems.length.toString(),
         SmallTempListCount: allocatedTempItems.length.toString(),
-        WrkMemSize: (wrkMem0.memsiz + wrkMem1.memsiz).toString(),
+        WrkMemSize: (wrkMem0.memsiz + wrkMem1.memsiz + sdWrkMem0 + sdWrkMem1 + sdWrkMem2 ).toString(),
         LogicalListSize: allocatedLogItems.length.toString(),
-        ErrorControlListSize: allocatedErrtrcItems.length.toString() };
+        ErrorControlListSize: allocatedErrtrcItems.length.toString(),
+        ErrorMememoryBytes: errMem.memsiz.toString(),
+        LoadedWin32Dlls: loadedDllCount.toString(),
+        NetFxLoaded: (netFxLoaded != undefined && !netFxLoaded.isNull),
+        DotNetLoaded: (netLoaded != undefined && !netLoaded.isNull),
+        GlobalHandleAllocatedBytes: globalHandleAllocatedBytes.toString(),
+        GlobalHandleCount: globalHandles.length.toString() };
 }
 
 class IOCB_FileTypeFlags
