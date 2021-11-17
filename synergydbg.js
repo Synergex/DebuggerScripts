@@ -286,17 +286,25 @@ function pcToSource(mptr, dblpc)
 
 function iterateLLST(head, targetType)
 {
+    
     var result = [];
-    var current = head;
-    var currentModuleName = hostModule();
-
-    if(head != undefined && !head.isNull && head.prev.address != head.next.address)
+    try
     {
-        do
+        var current = head;
+        var currentModuleName = hostModule();
+
+        if((head != undefined) && !head.isNull && head.prev.address != head.next.address)
         {
-            result.push(host.createTypedObject(current.address, currentModuleName, targetType));
-            current = current.next.dereference();
-        }while(current.address != head.address);
+            do
+            {
+                result.push(host.createTypedObject(current.address, currentModuleName, targetType));
+                current = current.next.dereference();
+            }while(current.address != head.address);
+        }
+    }
+    catch(e)
+    {
+        host.diagnostics.debugLog(e);
     }
     return result;
 }
