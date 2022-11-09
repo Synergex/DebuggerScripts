@@ -18,10 +18,19 @@ function hostModule()
     }
 }
 
-function findSymbol(name)
+function findSymbol(name, allowUndefined)
 {
     var moduleName = hostModule();
-    return host.getModuleSymbol(moduleName, name);  
+    var moduleSymbol = host.getModuleSymbol(moduleName, name);  
+    if(!allowUndefined && (moduleSymbol == null || moduleSymbol == undefined))
+    {
+        host.diagnostics.debugLog("failed to locate symbol: " + name + " ensure symbols are correctly loaded for " + moduleName);
+        return moduleSymbol;
+    }
+    else
+    {
+        return moduleSymbol;
+    }
 }
 
 function GetFileNameFromHandle(handle)
@@ -140,9 +149,16 @@ function showTraceback()
             
             var dblpc = first ? findSymbol("g_dblpc") : callFrames[i - 1].exitpc;
             var sourceInfo = pcToSource(mptr, dblpc);
+            var allScopeItems = [];
+            for(var ii = 0; ii <= frame.scplvl; ii++ )
+            {
+                var items = iterateLLST(frame.lclscope[ii].hdr, "HND_RNT *");
+                allScopeItems = allScopeItems.concat(items);
+            }
+
             var owner = mptr.dereference().owner;
             var name = readString(owner.dereference().se_name);
-            result.push(`${name}(${getArguments(frame).join(",")}) -> ${sourceInfo.SourceFile} : ${sourceInfo.LineNumber}`);
+            result.push(`${name}(${getArguments(frame).join(",")}) -> ${sourceInfo.SourceFile} : ${sourceInfo.LineNumber} ### Object Scope Count: ${frame.scplvl} Object Count: ${allScopeItems.length.toString()}`);
         }
         
         }
@@ -191,13 +207,45 @@ function getHandles(dynctl, isGlobal)
         if(handleType.isMemory)
         {
             var maxDisplaySize = Math.min(dynhand.size, 120);
-            result.push(`Scope = ${isGlobal ? "Global" : "Local"} Type = ${typeString} Size = ${dynhand.size} Address = ${dynhand.addr.address} Value = ${readString(dynhand.addr, maxDisplaySize)}`);
+            result.push(
+                {
+                    Scope: isGlobal ? "Global" : "Local",
+                    Type: typeString,
+                    Size: dynhand.size,
+                    Address: dynhand.addr.address,
+                    Value: readString(dynhand.addr, maxDisplaySize)
+                });
         }
         else
         {
-            result.push(`Scope = ${isGlobal ? "Global" : "Local"} Type = ${typeString} Size = ${dynhand.size} Address = ${dynhand.addr.address}`);
+           result.push(
+                {
+                    Scope: isGlobal ? "Global" : "Local",
+                    Type: typeString,
+                    Size: dynhand.size,
+                    Address: dynhand.addr.address
+                });
         }
         
+    }
+
+    return result;
+}
+
+function stringifyHandles(handles)
+{
+    var result = [];
+
+    for(var handle of handles)
+    {
+        if(handle.Value == undefined)
+        {
+            result.push(`Scope = ${handle.Scope} Type = ${handle.Type} Size = ${handle.Size} Address = ${handle.Address}`);
+        }
+        else
+        {
+            result.push(`Scope = ${handle.Scope} Type = ${handle.Type} Size = ${handle.Size} Address = ${handle.Address} Value = ${handle.Value}`);
+        }
     }
 
     return result;
@@ -207,7 +255,7 @@ function showHandles()
 {
     var globalDynmem = findSymbol("g_dm_gctl");
     var localDynmem = findSymbol("g_dm_lctl");
-    return getHandles(globalDynmem, true).concat(getHandles(localDynmem, false))
+    return stringifyHandles(getHandles(globalDynmem, true).concat(getHandles(localDynmem, false)));
 }
 
 function sourceNumberToName(mptr, sourceNumber)
@@ -221,7 +269,15 @@ function sourceNumberToName(mptr, sourceNumber)
         var nextAddress = mptr.linctl.address.add(nextSourceVal.next);
         nextSource = host.createPointerObject(nextAddress, currentHostName, "V9SRC *");
     }
-    return host.memory.readString(nextSource.dereference().name);
+
+    if(nextSource.isNull || nextSource.dereference().srcnum != sourceNumber)
+    {
+        host.diagnostics.debugLog("failed to locate source number " + sourceNumber.toString());
+    }
+    else
+    {
+        return host.memory.readString(nextSource.dereference().name);
+    }
 }
 
 function pcToSource(mptr, dblpc)
@@ -261,9 +317,104 @@ function pcToSource(mptr, dblpc)
         lincnt++;
     }
 
-
-//targetPSeg.begLine
     return { SourceFile: sourceNumberToName(mptr, targetPSeg.srcnum), LineNumber: lincnt + targetPSeg.srclin};
+}
+
+function iterateLLST(head, targetType)
+{
+    
+    var result = [];
+    try
+    {
+        if(head == undefined || head.isNull)
+        {
+            var currentModuleName = hostModule();
+            var current = host.createTypedObject(head.address, currentModuleName, "LLST");
+            
+            if(head.prev.address != head.next.address)
+            {
+                do
+                {
+                    result.push(host.createTypedObject(current.address, currentModuleName, targetType));
+                    if(current.next == undefined || current.next.isNull)
+                        break;
+
+                    current = host.createTypedObject(current.next.dereference().address, currentModuleName, "LLST");
+                }while(current.address != head.address);
+            }
+        }
+    }
+    catch(e)
+    {
+        host.diagnostics.debugLog(e);
+    }
+    return result;
+}
+
+function showMemory()
+{
+    var maxMemoryUsed = findSymbol("g_maxmemused");
+    var inUseMemory = findSymbol("g_inuse");
+
+    var items = iterateLLST(findSymbol("s_prgscope"), "HND_RNT *");
+    var liveObjects = [];
+    for(var item of items)
+    {
+        if(item.dereference().cctl.dereference().clsnam != undefined)
+            liveObjects.push(readString(item.dereference().cctl.dereference().clsnam));
+    }
+
+    var dbrMemItems = iterateLLST(findSymbol("g_dbrmem"), "MEM_LLST *");
+    var exeMemItems = iterateLLST(findSymbol("g_exemem"), "MEM_LLST *");
+    var stmtMemItems = iterateLLST(findSymbol("g_stmtmem"), "MEM_LLST *");
+    var freeTempItems = iterateLLST(findSymbol("g_tmpfree"), "MEM_LLST *");
+    var allocatedTempItems = iterateLLST(findSymbol("g_tmpblks"), "SMLTMP *");
+
+    var allocatedErrtrcItems = iterateLLST(findSymbol("g_errtrclst"), "eltrace *");
+    var allocatedLogItems = iterateLLST(findSymbol("g_logmem"), "MEM_LLST *");
+
+    var netFxLoaded = findSymbol("pRuntimeHost", true);
+    var netLoaded = findSymbol("pCoreHost", true);
+    
+    var gMaxMem = findSymbol("g_maxmem");
+    var relSegs = findSymbol("g_relsegs");
+    var wrkMem0 = findSymbol("g_wrk0");
+    var wrkMem1 = findSymbol("g_wrk1");
+    var errMem = findSymbol("s_ewrk");
+    var loadedDllCount = findSymbol("g_nmdlls");
+    var sdCtrl = findSymbol("g_r_sdctrl");
+    var sdWrkMem0 = sdCtrl.dereference().c_wrk0.memsiz;
+    var sdWrkMem1 = sdCtrl.dereference().c_wrk1.memsiz;
+    var sdWrkMem2 = sdCtrl.dereference().c_wrk2.memsiz;
+
+    var globalDynmem = findSymbol("g_dm_gctl");
+    var globalHandles = getHandles(globalDynmem, true);
+    var globalHandleAllocatedBytes = 0;
+    for(var handle of globalHandles)
+    {
+        globalHandleAllocatedBytes += handle.Size;
+    }
+
+    return {
+        LiveObjects: liveObjects,
+        MaxMemoryUsedBytes: maxMemoryUsed.toString(),
+        InUseMemoryBytes: inUseMemory.toString(),
+        MaxMemSetting: gMaxMem.toString(),
+        RelSegs: relSegs.toString(),
+        DBRMemAllocationCount: dbrMemItems.length.toString(),
+        EXEMemAllocationCount: exeMemItems.length.toString(),
+        StatementMemAllocationCount: stmtMemItems.length.toString(),
+        TempFreeListCount: freeTempItems.length.toString(),
+        SmallTempListCount: allocatedTempItems.length.toString(),
+        WrkMemSize: (wrkMem0.memsiz + wrkMem1.memsiz + sdWrkMem0 + sdWrkMem1 + sdWrkMem2 ).toString(),
+        LogicalListSize: allocatedLogItems.length.toString(),
+        ErrorControlListSize: allocatedErrtrcItems.length.toString(),
+        ErrorMememoryBytes: errMem.memsiz.toString(),
+        LoadedWin32Dlls: loadedDllCount.toString(),
+        NetFxLoaded: (netFxLoaded != undefined && !netFxLoaded.isNull),
+        DotNetLoaded: (netLoaded != undefined && !netLoaded.isNull),
+        GlobalHandleAllocatedBytes: globalHandleAllocatedBytes.toString(),
+        GlobalHandleCount: globalHandles.length.toString() };
 }
 
 class IOCB_FileTypeFlags
@@ -477,8 +628,8 @@ function initializeScript() {
             'showTraceback'
         ),
         new host.functionAlias(
-            synergyCallFrames,
-            'synergyCallFrames'
+            showMemory,
+            'showMemory'
         )
     ];
 }
