@@ -1,5 +1,10 @@
 ﻿"use strict";
 
+function isX86()
+{
+    return host.currentSession.Attributes.Machine.PointerSize == 4;
+}
+
 function hostModule()
 {
     const regexPath = /^(.*[\\\/])(.*)$/;
@@ -47,70 +52,103 @@ function readString(obj, length)
 
 function getArguments(frame)
 {
-    var DSC_A =	0x0010;	/*   Alpha				*/
-    var DSC_I = 0x0020;	/*   Integer				*/
-    var DSC_D = 0x0040;	/*   Decimal				*/
-    var DSC_ID = 0x0080;	/*   Implied Decimal			*/
-    var DSC_DIM = 0x0400; /*   Dimensioned			*/
-    var DSC_OHND = 0x4000;	/*   Object handle			*/
-    if(frame.xargp.isNull)
-        return [];
-
-    var argBlockSize = host.memory.readMemoryValues(frame.xargp, 1, 4, false);
-    var resultArgs = [];
-    for(var i = 1; i <= argBlockSize; i++)
+    try
     {
-        var descr = frame.xargp[i];
+        var is32Bit = isX86();
+        var DSC_A =	is32Bit ? 0x0010 : 0x0100;	/*   Alpha				*/
+        var DSC_I = is32Bit ? 0x0020 : 0x0200;	/*   Integer				*/
+        var DSC_D = is32Bit ? 0x0040 : 0x0400;	/*   Decimal				*/
+        var DSC_ID = is32Bit ? 0x0080 : 0x0800;	/*   Implied Decimal			*/
+        var DSC_DIM = is32Bit ? 0x0400 : 0x10000; /*   Dimensioned			*/
+        var DSC_OHND = is32Bit ? 0x4000 : 0x100000;	/*   Object handle			*/
 
-        var descrVal = descr.dereference();
-        var argValue = "";
+        if(frame.xargp.isNull)
+            return [];
 
-        if(descrVal.ctl & DSC_DIM == DSC_DIM)
+        var argBlockSize = host.memory.readMemoryValues(frame.xargp, 1, 4, false);
+        var resultArgs = [];
+        for(var i = 1; i <= argBlockSize; i++)
         {
-            argValue = "{array}";
+            try
+            {
+                var descr = frame.xargp[i];
+
+                var descrVal = descr.dereference();
+                var argValue = "";
+
+                if(descrVal.ctl & DSC_DIM == DSC_DIM)
+                {
+                    argValue = "{array}";
+                }
+                else
+                {
+                    if(descrVal.ctl & DSC_A)
+                    {
+                        argValue = '"' + readString(descrVal.addr, descrVal.len) + '"';
+                    }
+                    else if(descrVal.ctl & DSC_I)
+                    {
+                        argValue = host.memory.readMemoryValues(descrVal.addr, 1, descrVal.len, true);
+                    }
+                    else if(descrVal.ctl & DSC_D)
+                    {
+                        argValue = readString(descrVal.addr, descrVal.len);
+                    }
+                    else if(descrVal.ctl & DSC_ID)
+                    {
+                        argValue = readString(descrVal.addr, descrVal.len);
+                    }
+                    else if(descrVal.ctl & DSC_OHND)
+                    {
+                        argValue = "{object}";
+                    }
+                    else
+                    {
+                        argValue = "{ctl: " + descrVal.ctl.toString() + "}";
+                    }
+                }
+                resultArgs.push(argValue);
+            }
+            catch(err)
+            {
+                resultArgs.push("failure");
+            }
         }
-        else
-        {
-            if(descrVal.ctl & DSC_A)
-            {
-                argValue = '"' + readString(descrVal.addr, descrVal.len) + '"';
-            }
-            else if(descrVal.ctl & DSC_I)
-            {
-                argValue = host.memory.readMemoryValues(descrVal.addr, 1, descrVal.len, true);
-            }
-            else if(descrVal.ctl & DSC_D)
-            {
-                argValue = readString(descrVal.addr, descrVal.len);
-            }
-            else if(descrVal.ctl & DSC_ID)
-            {
-                argValue = readString(descrVal.addr, descrVal.len);
-            }
-            else if(descrVal.ctl & DSC_OHND)
-            {
-                argValue = "{object}";
-            }
-        }
-        resultArgs.push(argValue);
+        return resultArgs;
     }
-    return resultArgs;
+    catch(err)
+    {
+        return ["failure"];
+    }
+    
 }
 
 function showTraceback()
 {
+
     var callFrames = synergyCallFrames();
     var result = [];
     var first = true;
-    for(var frame of callFrames)
+    for(var i = 0; i < callFrames.length;i++)
     {
+        var frame = callFrames[i];
+        try
+        {
         var mptr = frame.mptr;
         if(mptr != null)
         {
-            var sourceInfo = pcToSource(mptr, first ? mptr.exitpc : findSymbol("g_dblpc"));
+            
+            var dblpc = first ? findSymbol("g_dblpc") : callFrames[i - 1].exitpc;
+            var sourceInfo = pcToSource(mptr, dblpc);
             var owner = mptr.dereference().owner;
             var name = readString(owner.dereference().se_name);
             result.push(`${name}(${getArguments(frame).join(",")}) -> ${sourceInfo.SourceFile} : ${sourceInfo.LineNumber}`);
+        }
+        
+        }
+        catch(err)
+        {
+            result.push(err)
         }
         first = false;
     }
@@ -189,33 +227,43 @@ function sourceNumberToName(mptr, sourceNumber)
 function pcToSource(mptr, dblpc)
 {
     var currentHostName = hostModule();
-    var pcOffset = dblpc - mptr.code;
+    var pcOffset = dblpc.address.getLowPart() - mptr.code.address.getLowPart();
+     
     var psegTable = mptr.linctl.address.add(mptr.psegtbl);
     var psegTableTyped = host.createPointerObject(psegTable, currentHostName, "V9PSEG *");
-    
-    var targetPSeg = psegTableTyped[1];
+     
+    var targetPSeg = psegTableTyped[0];
+    var nextPSeg = psegTableTyped[1];
+
     var currentLineNumber = 0;
-    var segIndex = 1;
-    if (!((pcOffset > 0XFFFF) || (pcOffset < 0)))
+    var segIndex = 0;
+
+    if ((pcOffset > 0XFFFF) || (pcOffset < 0))
     {
-        while (targetPSeg.dblpc < pcOffset)	/* Find the V9PSEG entry	*/
+    }
+    else
+    {
+        while (nextPSeg.dblpc < pcOffset)	/* Find the V9PSEG entry	*/
         {
-	        targetPSeg = psegTableTyped[segIndex++];
+            targetPSeg = nextPSeg;
+            nextPSeg = psegTableTyped[++segIndex]
         }
     }
 
-    //var pcp = host.createPointerObject(mptr.linctl.address.add(targetPSeg.ctlndxl), currentHostName, "V9PSEG *");
-    //var pcpIndex = 0;
-	//var ix = (psegTableTyped[segIndex].ctlndx - targetPSeg.ctlndx);
-    //var lincnt = 0;
-	//while ((--ix >= 0) && (pcp[pcpIndex] < pcOffset))
-    //{
-    //    pcpIndex++;
-    //    lincnt++;
-    //}
+    var pcp = host.createPointerObject(mptr.linctl.address.add(targetPSeg.ctlndx), currentHostName, "DBLPC *");
+
+    var pcpIndex = 0;
+	var ix = (nextPSeg.ctlndx - targetPSeg.ctlndx);
+    var lincnt = 0;
+    while ((--ix >= 0) && (pcp[pcpIndex] < pcOffset))
+    {
+        pcpIndex++;
+        lincnt++;
+    }
 
 
-    return { SourceFile: sourceNumberToName(mptr, targetPSeg.srcnum), LineNumber: currentLineNumber };
+//targetPSeg.begLine
+    return { SourceFile: sourceNumberToName(mptr, targetPSeg.srcnum), LineNumber: lincnt + targetPSeg.srclin};
 }
 
 class IOCB_FileTypeFlags
@@ -427,6 +475,10 @@ function initializeScript() {
         new host.functionAlias(
             showTraceback,
             'showTraceback'
+        ),
+        new host.functionAlias(
+            synergyCallFrames,
+            'synergyCallFrames'
         )
     ];
 }
