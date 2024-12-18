@@ -7,15 +7,22 @@ function isX86()
 
 function hostModule()
 {
-    const regexPath = /^(.*[\\\/])(.*)$/;
+    const moduleName = /^(.*[\\\/])*(dbr|DBR|dbs|DBS)(\.exe)$/;
 
     // execute the match on the string str
-    const match = regexPath.exec(host.currentProcess.Modules[0].Name);
-    if (match !== null) {
-        // we ignore the match[0] because it's the match for the hole path string
-        //const filePath = match[1];
-        return match[2];
+    for (let i = 0; i < host.currentProcess.Modules.Count(); i++)
+    {
+        if (moduleName.exec(host.currentProcess.Modules[i].Name) != null)
+        {
+            const match = moduleName.exec(host.currentProcess.Modules[i].Name);
+            if (match !== null) {
+                // we ignore the match[0] because it's the match for the hole path string
+                return match[2];
+            }
+        }
     }
+    
+    return null;
 }
 
 function findSymbol(name, allowUndefined)
@@ -130,6 +137,48 @@ function getArguments(frame)
         return ["failure"];
     }
     
+}
+
+function showPrettyTraceback()
+{
+    var callFrames = synergyCallFrames();
+    var result = [];
+    var first = true;
+    for(var i = 0; i < callFrames.length;i++)
+    {
+        var frame = callFrames[i];
+        try
+        {
+        var mptr = frame.mptr;
+        if(mptr != null)
+        {
+            
+            var dblpc = first ? findSymbol("g_dblpc") : callFrames[i - 1].exitpc;
+            var sourceInfo = pcToSource(mptr, dblpc);
+            var allScopeItems = [];
+            for(var ii = 0; ii <= frame.scplvl; ii++ )
+            {
+                var items = iterateLLST(frame.lclscope[ii].hdr, "HND_RNT *");
+                allScopeItems = allScopeItems.concat(items);
+            }
+
+            var owner = mptr.dereference().owner;
+            var name = readString(owner.dereference().se_name);
+            var argCount = 0;
+            if(!frame.xargp.isNull)
+                argCount = host.memory.readMemoryValues(frame.xargp, 1, 4, false);
+    
+            result.push(`${name}(${argCount} args) -> ${sourceInfo.SourceFile} : ${sourceInfo.LineNumber}`);
+        }
+        
+        }
+        catch(err)
+        {
+            result.push(err)
+        }
+        first = false;
+    }
+    return result;
 }
 
 function showTraceback()
@@ -612,6 +661,13 @@ class HandleTypes
     }
 }
 
+function invokeScript() {
+    let module = hostModule();
+    if (module == null) {
+        host.diagnostics.debugLog("Could not locate target dbr or dbs module");
+    }
+}
+
 function initializeScript() {
     return [
         new host.apiVersionSupport(1, 3),
@@ -626,6 +682,10 @@ function initializeScript() {
         new host.functionAlias(
             showTraceback,
             'showTraceback'
+        ),
+        new host.functionAlias(
+            showPrettyTraceback,
+            'showPrettyTraceback'
         ),
         new host.functionAlias(
             showMemory,
