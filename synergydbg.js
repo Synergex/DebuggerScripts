@@ -12,13 +12,11 @@ function hostModule()
     // execute the match on the string str
     for (let i = 0; i < host.currentProcess.Modules.Count(); i++)
     {
-        if (moduleName.exec(host.currentProcess.Modules[i].Name) != null)
+        let match = moduleName.exec(host.currentProcess.Modules[i].Name);
+        if (match != null)
         {
-            const match = moduleName.exec(host.currentProcess.Modules[i].Name);
-            if (match !== null) {
-                // we ignore the match[0] because it's the match for the hole path string
-                return match[2];
-            }
+            // we ignore the match[0] because it's the match for the hole path string
+            return match[2];
         }
     }
     
